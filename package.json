@@ -9,7 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@google/genai": "*",
+    "@google/genai": "latest",
     "@mediapipe/tasks-vision": "latest",
     "lucide-react": "latest",
     "peerjs": "^1.5.2",

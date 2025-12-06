@@ -11,5 +11,19 @@ export default defineConfig({
   },
   server: {
     host: true // Expose to network for local mobile testing
+  },
+  build: {
+    // MediaPipe and AI libraries are large, so we increase the warning limit
+    chunkSizeWarningLimit: 1600, 
+    rollupOptions: {
+      output: {
+        // Separate vendor libraries into their own chunks for better caching and performance
+        manualChunks: {
+          'mediapipe': ['@mediapipe/tasks-vision'],
+          'vendor': ['react', 'react-dom', 'lucide-react', 'peerjs'],
+          'genai': ['@google/genai']
+        }
+      }
+    }
   }
 });

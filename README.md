@@ -2,7 +2,7 @@
 
 **MeetingMate** is a real-time, multimodal meeting assistant designed to bridge the gap between non-verbal communication and accessibility. It uses computer vision to detect silent consensus (nods and head shakes) and transmits these signals to a mobile client for haptic feedback. Additionally, it leverages Generative AI to provide comprehensive, result-oriented meeting reports based on both visual engagement and audio context.
 
-Live MeetingMate Beta URL: **https://meeting-mate-blond.vercel.app/**
+Demo MeetingMate URL: **https://meeting-mate-blond.vercel.app/**
 
 ## 🚀 Features
 

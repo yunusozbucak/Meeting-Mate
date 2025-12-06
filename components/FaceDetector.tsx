@@ -16,7 +16,7 @@ export interface FaceDetectorHandle {
 const FaceDetector = forwardRef<FaceDetectorHandle, FaceDetectorProps>(({ onStatsUpdate }, ref) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [isLoaded, setIsLoaded] = useState(false);
-  const [error, setError] = useState<{title: string, msg: string} | null>(null);
+  const [error, setError] = useState<{title: string, msg: string, details?: string} | null>(null);
   const [feedback, setFeedback] = useState<{msg: string, type: 'NOD' | 'SHAKE'} | null>(null);
   const [showDebug, setShowDebug] = useState(false);
   const [roomCode, setRoomCode] = useState<string | null>(null);
@@ -144,10 +144,10 @@ const FaceDetector = forwardRef<FaceDetectorHandle, FaceDetectorProps>(({ onStat
     setError(null);
     
     // Security Check
-    if (!window.isSecureContext) {
+    if (typeof window !== 'undefined' && window.isSecureContext === false) {
         setError({
-            title: "Insecure Context",
-            msg: "Camera requires HTTPS. Please check your URL."
+            title: "HTTPS Required",
+            msg: "Camera access requires a secure connection. Please verify your URL starts with https://"
         });
         return;
     }
@@ -155,7 +155,7 @@ const FaceDetector = forwardRef<FaceDetectorHandle, FaceDetectorProps>(({ onStat
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         setError({
             title: "Unsupported Browser",
-            msg: "Your browser does not support camera access."
+            msg: "Your browser does not support camera access APIs."
         });
         return;
     }
@@ -163,8 +163,8 @@ const FaceDetector = forwardRef<FaceDetectorHandle, FaceDetectorProps>(({ onStat
     try {
       let stream: MediaStream;
       
+      // STRATEGY 1: Ideal Configuration (Audio + Video + Constraints)
       try {
-        // Try Video + Audio first
         stream = await navigator.mediaDevices.getUserMedia({ 
             video: { 
                 width: { ideal: 640 }, 
@@ -174,25 +174,38 @@ const FaceDetector = forwardRef<FaceDetectorHandle, FaceDetectorProps>(({ onStat
             audio: true 
         });
         setHasAudio(true);
-      } catch (audioErr) {
-        console.warn("Audio/Video permission failed, retrying Video only", audioErr);
-        // Fallback: Video Only
-        stream = await navigator.mediaDevices.getUserMedia({ 
-            video: { 
-                width: { ideal: 640 }, 
-                height: { ideal: 480 },
-                facingMode: "user" 
-            },
-            audio: false 
-        });
-        setHasAudio(false);
+      } catch (err1) {
+        console.warn("Strategy 1 failed (Audio+Video), trying Strategy 2 (Video Only)", err1);
+        
+        // STRATEGY 2: Video Only (Constraints)
+        try {
+            stream = await navigator.mediaDevices.getUserMedia({ 
+                video: { 
+                    width: { ideal: 640 }, 
+                    height: { ideal: 480 },
+                    facingMode: "user" 
+                },
+                audio: false 
+            });
+            setHasAudio(false);
+        } catch (err2) {
+             console.warn("Strategy 2 failed (Video Constraints), trying Strategy 3 (Bare Minimum)", err2);
+             
+             // STRATEGY 3: Last Resort (Any Video Source)
+             // This fixes "OverconstrainedError" on devices that don't match 640x480 or 'user' facing mode
+             stream = await navigator.mediaDevices.getUserMedia({ 
+                video: true,
+                audio: false
+            });
+            setHasAudio(false);
+        }
       }
 
       // If we got here, we have a stream.
       // 1. Setup Audio Recorder (if tracks exist)
       const audioTracks = stream.getAudioTracks();
       if (audioTracks.length > 0) {
-          setHasAudio(true); // Re-confirm in case fallback wasn't needed
+          setHasAudio(true); 
           audioChunksRef.current = [];
           const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
           recorder.ondataavailable = (event) => {
@@ -207,28 +220,37 @@ const FaceDetector = forwardRef<FaceDetectorHandle, FaceDetectorProps>(({ onStat
       // 2. Setup Video
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
+        // Wait for data before predicting
         videoRef.current.addEventListener('loadeddata', predictWebcam);
       }
       
       setIsCameraActive(true);
 
     } catch (err: any) {
-      console.error("Camera Start Error:", err);
+      console.error("All Camera Strategies Failed:", err);
+      
       if (!isAutoStart) {
-          let msg = "Could not access camera.";
+          let msg = "Could not access camera after multiple attempts.";
           let title = "Access Denied";
           
           if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-              msg = "You denied camera permissions. Click the lock icon in your URL bar to reset.";
+              msg = "Permission was denied. Click the lock icon in your browser URL bar to Allow Camera.";
           } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
               title = "No Device Found";
-              msg = "No camera or microphone found on this device.";
+              msg = "No camera hardware detected on this device.";
           } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
               title = "Hardware Error";
-              msg = "Camera is already in use by another application.";
+              msg = "Camera is likely in use by another app (Zoom, Teams, etc). Please close other apps.";
+          } else if (err.name === 'OverconstrainedError') {
+              title = "Constraint Error";
+              msg = "Your camera does not support the requested resolution.";
           }
 
-          setError({ title, msg });
+          setError({ 
+              title, 
+              msg, 
+              details: `${err.name}: ${err.message}` 
+          });
       }
     }
   };
@@ -375,16 +397,24 @@ const FaceDetector = forwardRef<FaceDetectorHandle, FaceDetectorProps>(({ onStat
       
       {/* PROFESSIONAL ERROR OVERLAY */}
       {error && (
-        <div className="absolute inset-0 flex items-center justify-center z-30 bg-zinc-950/90 backdrop-blur-md p-6">
-          <div className="flex flex-col items-center text-center max-w-[280px]">
-             <div className="p-3 bg-red-500/10 rounded-full mb-3">
+        <div className="absolute inset-0 flex items-center justify-center z-30 bg-zinc-950/95 backdrop-blur-md p-4 overflow-y-auto custom-scrollbar">
+          <div className="flex flex-col items-center text-center max-w-[90%] w-full">
+             <div className="p-3 bg-red-500/10 rounded-full mb-3 shrink-0">
                 <ShieldAlert className="w-8 h-8 text-red-500" />
              </div>
-             <h3 className="text-white font-bold text-sm uppercase tracking-wide mb-2">{error.title}</h3>
-             <p className="text-zinc-400 text-xs leading-relaxed mb-4">{error.msg}</p>
+             <h3 className="text-white font-bold text-sm uppercase tracking-wide mb-2 break-words">{error.title}</h3>
+             <p className="text-zinc-400 text-xs leading-relaxed mb-4 break-words text-balance">{error.msg}</p>
+             
+             {/* Technical Details for Debugging */}
+             {error.details && (
+                <div className="mb-4 p-2 bg-black/50 rounded border border-zinc-800 w-full">
+                    <p className="text-[10px] font-mono text-red-400 break-all">{error.details}</p>
+                </div>
+             )}
+
              <button 
                 onClick={() => startCamera(false)}
-                className="flex items-center gap-2 bg-zinc-100 hover:bg-white text-black px-4 py-2 rounded-lg transition-all font-bold text-xs uppercase tracking-wider"
+                className="flex items-center gap-2 bg-zinc-100 hover:bg-white text-black px-4 py-2 rounded-lg transition-all font-bold text-xs uppercase tracking-wider shrink-0"
             >
                 <RefreshCw size={14} />
                 Try Again

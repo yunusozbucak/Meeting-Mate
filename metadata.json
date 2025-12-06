@@ -1,0 +1,7 @@
+{
+  "name": "MeetingMate",
+  "description": "Silent Consensus MVP using MediaPipe for gesture detection and Gemini for meeting analysis.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}

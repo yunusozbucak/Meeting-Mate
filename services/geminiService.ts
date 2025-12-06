@@ -1,11 +1,10 @@
-
 import { GoogleGenAI, Type } from "@google/genai";
 import { MeetingStats, AnalysisResult } from "../types";
 
 // NOTE: In a real deployment, ensure process.env.API_KEY is available.
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
 
-export const generateMeetingSummary = async (stats: MeetingStats, audioBase64?: string): Promise<AnalysisResult> => {
+export const generateMeetingSummary = async (stats: MeetingStats, audioData?: { base64: string, mimeType: string }): Promise<AnalysisResult> => {
   if (!process.env.API_KEY) {
     console.error("API Key is missing!");
     return {
@@ -45,11 +44,11 @@ export const generateMeetingSummary = async (stats: MeetingStats, audioBase64?: 
   const parts: any[] = [{ text: textPrompt }];
 
   // If audio exists, attach it to the payload
-  if (audioBase64) {
+  if (audioData) {
       parts.push({
           inlineData: {
-              mimeType: "audio/webm",
-              data: audioBase64
+              mimeType: audioData.mimeType, // Dynamic MIME type (audio/webm, audio/mp4, etc.)
+              data: audioData.base64
           }
       });
   } else {

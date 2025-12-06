@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState, useImperativeHandle, forwardRef } f
 import { FilesetResolver, FaceLandmarker } from '@mediapipe/tasks-vision';
 import { Landmark, DetectionResult } from '../types';
 import { SignalingService } from '../services/signalingService';
-import { RefreshCw, AlertCircle, Settings2, Activity, Cast, Mic, MicOff, Camera, Video, Check, X, ShieldAlert } from 'lucide-react';
+import { RefreshCw, Settings2, Activity, Mic, MicOff, Camera, Check, X, ShieldAlert } from 'lucide-react';
 
 interface FaceDetectorProps {
   onStatsUpdate: (type: 'NOD' | 'SHAKE') => void;
@@ -10,7 +10,7 @@ interface FaceDetectorProps {
 
 // Expose methods to parent via Ref
 export interface FaceDetectorHandle {
-  stopAndGetAudio: () => Promise<string | undefined>;
+  stopAndGetAudio: () => Promise<{ base64: string, mimeType: string } | undefined>;
 }
 
 const FaceDetector = forwardRef<FaceDetectorHandle, FaceDetectorProps>(({ onStatsUpdate }, ref) => {
@@ -41,6 +41,7 @@ const FaceDetector = forwardRef<FaceDetectorHandle, FaceDetectorProps>(({ onStat
   // Audio Recording Refs
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
+  const recordingMimeTypeRef = useRef<string>('');
 
   // Expose audio retrieval to parent (App.tsx)
   useImperativeHandle(ref, () => ({
@@ -53,14 +54,15 @@ const FaceDetector = forwardRef<FaceDetectorHandle, FaceDetectorProps>(({ onStat
             if (!mediaRecorderRef.current) return resolve(undefined);
 
             mediaRecorderRef.current.onstop = () => {
-                const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+                const mimeType = recordingMimeTypeRef.current || 'audio/webm';
+                const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
                 const reader = new FileReader();
                 reader.readAsDataURL(audioBlob);
                 reader.onloadend = () => {
                     const base64String = reader.result as string;
                     // Remove data url prefix
                     const base64Data = base64String.split(',')[1];
-                    resolve(base64Data);
+                    resolve({ base64: base64Data, mimeType });
                 };
             };
             mediaRecorderRef.current.stop();
@@ -205,16 +207,39 @@ const FaceDetector = forwardRef<FaceDetectorHandle, FaceDetectorProps>(({ onStat
       // 1. Setup Audio Recorder (if tracks exist)
       const audioTracks = stream.getAudioTracks();
       if (audioTracks.length > 0) {
-          setHasAudio(true); 
           audioChunksRef.current = [];
-          const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
-          recorder.ondataavailable = (event) => {
-              if (event.data.size > 0) {
-                  audioChunksRef.current.push(event.data);
-              }
+          
+          // Helper to find supported mime type
+          const getSupportedMimeType = () => {
+            if (MediaRecorder.isTypeSupported('audio/webm')) return 'audio/webm';
+            if (MediaRecorder.isTypeSupported('audio/mp4')) return 'audio/mp4';
+            if (MediaRecorder.isTypeSupported('audio/ogg')) return 'audio/ogg';
+            if (MediaRecorder.isTypeSupported('audio/wav')) return 'audio/wav';
+            return ''; // Let browser decide default
           };
-          recorder.start(1000); // Collect chunks every second
-          mediaRecorderRef.current = recorder;
+
+          const mimeType = getSupportedMimeType();
+          const options: MediaRecorderOptions = mimeType ? { mimeType } : {};
+
+          try {
+            const recorder = new MediaRecorder(stream, options);
+            recordingMimeTypeRef.current = recorder.mimeType || mimeType || ''; 
+
+            recorder.ondataavailable = (event) => {
+                if (event.data.size > 0) {
+                    audioChunksRef.current.push(event.data);
+                }
+            };
+            recorder.start(1000); // Collect chunks every second
+            mediaRecorderRef.current = recorder;
+            setHasAudio(true);
+          } catch (recErr) {
+             console.error("Audio recording failed to start (NotSupportedError or similar):", recErr);
+             // Continue without audio recording rather than crashing the camera flow
+             setHasAudio(false);
+          }
+      } else {
+        setHasAudio(false);
       }
 
       // 2. Setup Video

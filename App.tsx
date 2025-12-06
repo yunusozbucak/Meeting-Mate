@@ -1,4 +1,3 @@
-
 import React, { useState, useRef } from 'react';
 import { AppMode, MeetingStats, AnalysisResult } from './types';
 import FaceDetector, { FaceDetectorHandle } from './components/FaceDetector';
@@ -34,13 +33,13 @@ const App: React.FC = () => {
     setAnalysis(null);
     
     // 1. Get Audio Recording from FaceDetector
-    let audioBase64: string | undefined;
+    let audioData: { base64: string, mimeType: string } | undefined;
     if (faceDetectorRef.current) {
-        audioBase64 = await faceDetectorRef.current.stopAndGetAudio();
+        audioData = await faceDetectorRef.current.stopAndGetAudio();
     }
 
     // 2. Generate Analysis with Video Stats + Audio
-    const result = await generateMeetingSummary(stats, audioBase64);
+    const result = await generateMeetingSummary(stats, audioData);
     setAnalysis(result);
     setIsAnalyzing(false);
   };

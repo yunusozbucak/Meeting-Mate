@@ -12,7 +12,7 @@ const FaceDetector: React.FC<FaceDetectorProps> = ({ onStatsUpdate }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [isLoaded, setIsLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [feedback, setFeedback] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<{msg: string, type: 'NOD' | 'SHAKE'} | null>(null);
   const [showDebug, setShowDebug] = useState(false);
   const [roomCode, setRoomCode] = useState<string | null>(null);
   
@@ -20,7 +20,7 @@ const FaceDetector: React.FC<FaceDetectorProps> = ({ onStatsUpdate }) => {
   const [sensitivity, setSensitivity] = useState(0.5); // 0.1 (Hard) to 1.0 (Easy)
 
   // Live Debug Stats
-  const [debugStats, setDebugStats] = useState({ ampY: 0, ampX: 0, osc: 0 });
+  const [debugStats, setDebugStats] = useState({ ampY: 0, ampX: 0, oscY: 0, oscX: 0 });
   
   // Refs for gesture logic
   const lastGestureTimeRef = useRef(0);
@@ -101,7 +101,7 @@ const FaceDetector: React.FC<FaceDetectorProps> = ({ onStatsUpdate }) => {
     }
   };
 
-  const detectNod = (landmarks: Landmark[]) => {
+  const detectGesture = (landmarks: Landmark[]) => {
     // Index 1 is the nose tip
     const noseTip = landmarks[1];
     const now = Date.now();
@@ -114,7 +114,7 @@ const FaceDetector: React.FC<FaceDetectorProps> = ({ onStatsUpdate }) => {
     // Need enough data points
     if (noseHistoryRef.current.length < 5) return;
 
-    // --- ALGORITHM: 6. GÜN İNCE AYAR ---
+    // --- ALGORITHM: NOD (Y-Axis) & SHAKE (X-Axis) DETECTION ---
     
     // 1. Calculate Amplitudes
     const ys = noseHistoryRef.current.map(p => p.y);
@@ -125,62 +125,79 @@ const FaceDetector: React.FC<FaceDetectorProps> = ({ onStatsUpdate }) => {
 
     // Dynamic Threshold based on sensitivity slider
     // High sensitivity (1.0) -> Low threshold (0.02)
-    // Low sensitivity (0.1) -> High threshold (0.08)
-    const THRESHOLD_Y = 0.08 - (sensitivity * 0.06); 
+    const BASE_THRESHOLD = 0.08 - (sensitivity * 0.06); 
+    const THRESHOLD_Y = BASE_THRESHOLD;
+    const THRESHOLD_X = BASE_THRESHOLD; // Can be tuned independently if needed
 
-    // 2. Count direction changes (Oscillations)
-    let directionChanges = 0;
-    let lastDirection = 0; 
+    // 2. Count direction changes (Oscillations) for BOTH axes
+    let oscY = 0;
+    let lastDirY = 0;
+    
+    let oscX = 0;
+    let lastDirX = 0;
     
     for (let i = 1; i < noseHistoryRef.current.length; i++) {
-        const delta = noseHistoryRef.current[i].y - noseHistoryRef.current[i-1].y;
-        if (Math.abs(delta) > 0.002) { 
-            const currentDirection = Math.sign(delta);
-            if (lastDirection !== 0 && currentDirection !== lastDirection) {
-                directionChanges++;
-            }
-            lastDirection = currentDirection;
+        // Y Calculations (Nod)
+        const deltaY = noseHistoryRef.current[i].y - noseHistoryRef.current[i-1].y;
+        if (Math.abs(deltaY) > 0.002) { 
+            const currentDirY = Math.sign(deltaY);
+            if (lastDirY !== 0 && currentDirY !== lastDirY) oscY++;
+            lastDirY = currentDirY;
+        }
+
+        // X Calculations (Shake)
+        const deltaX = noseHistoryRef.current[i].x - noseHistoryRef.current[i-1].x;
+        if (Math.abs(deltaX) > 0.002) {
+            const currentDirX = Math.sign(deltaX);
+            if (lastDirX !== 0 && currentDirX !== lastDirX) oscX++;
+            lastDirX = currentDirX;
         }
     }
 
-    // UPDATE DEBUG STATS (For UI)
-    if (showDebug && now % 10 === 0) { // Throttle updates
+    // UPDATE DEBUG STATS
+    if (showDebug && now % 10 === 0) { 
         setDebugStats({
             ampY: parseFloat(rangeY.toFixed(3)),
             ampX: parseFloat(rangeX.toFixed(3)),
-            osc: directionChanges
+            oscY: oscY,
+            oscX: oscX
         });
     }
 
-    // --- DETECTION LOGIC ---
+    // --- DECISION LOGIC ---
 
-    // Rule 1: Must have significant vertical movement (Amplitude Y)
-    const hasVerticalMovement = rangeY > THRESHOLD_Y;
+    // Debounce
+    if (now - lastGestureTimeRef.current < 1500) return;
 
-    // Rule 2: Must oscillate (Up-Down-Up)
-    const hasOscillation = directionChanges >= 3;
+    // NOD DETECTION (Vertical Dominant)
+    // Rule: High Y amplitude, Y oscillations >= 3, X movement is low (stabilization)
+    const isNod = rangeY > THRESHOLD_Y && oscY >= 3 && rangeX < (rangeY * 0.75);
 
-    // Rule 3: Horizontal Stabilization (The "Look Around" Filter)
-    // If we are moving X almost as much as Y, it's not a clear nod.
-    // Allow X movement up to 60% of Y movement.
-    const isStable = rangeX < (rangeY * 0.6);
+    // SHAKE DETECTION (Horizontal Dominant)
+    // Rule: High X amplitude, X oscillations >= 3, Y movement is low (stabilization)
+    const isShake = rangeX > THRESHOLD_X && oscX >= 3 && rangeY < (rangeX * 0.75);
 
-    if (hasVerticalMovement && hasOscillation && isStable) { 
-       // Debounce (1.5s)
-       if (now - lastGestureTimeRef.current > 1500) {
-          lastGestureTimeRef.current = now;
-          
-          // Action
-          onStatsUpdate('NOD');
-          SignalingService.broadcast('NOD');
-          
-          setFeedback("ONAYLIYOR");
-          setTimeout(() => setFeedback(null), 1000);
-          
-          // Clear history
-          noseHistoryRef.current = [];
-       }
+    if (isNod) {
+        triggerAction('NOD');
+    } else if (isShake) {
+        triggerAction('SHAKE');
     }
+  };
+
+  const triggerAction = (type: 'NOD' | 'SHAKE') => {
+      lastGestureTimeRef.current = Date.now();
+      
+      onStatsUpdate(type);
+      SignalingService.broadcast(type);
+      
+      setFeedback({
+          msg: type === 'NOD' ? "ONAYLIYOR" : "REDDEDİYOR",
+          type: type
+      });
+      setTimeout(() => setFeedback(null), 1000);
+      
+      // Clear history to prevent double triggering
+      noseHistoryRef.current = [];
   };
 
   const predictWebcam = () => {
@@ -193,7 +210,7 @@ const FaceDetector: React.FC<FaceDetectorProps> = ({ onStatsUpdate }) => {
         try {
           const result: DetectionResult = landmarker.detectForVideo(video, performance.now());
           if (result.faceLandmarks && result.faceLandmarks.length > 0) {
-            detectNod(result.faceLandmarks[0]);
+            detectGesture(result.faceLandmarks[0]);
           }
         } catch (e) {
           console.warn("Detection error:", e);
@@ -240,7 +257,7 @@ const FaceDetector: React.FC<FaceDetectorProps> = ({ onStatsUpdate }) => {
         LIVE TRACKING
       </div>
 
-       {/* Room Code Indicator (Vital for Mobile Connection) */}
+       {/* Room Code Indicator */}
        {roomCode && (
         <div className="absolute bottom-4 right-4 bg-zinc-100 text-black px-4 py-2 rounded-xl flex items-center gap-3 shadow-lg animate-in fade-in slide-in-from-bottom-4">
             <div className="bg-black/10 p-1 rounded">
@@ -280,31 +297,28 @@ const FaceDetector: React.FC<FaceDetectorProps> = ({ onStatsUpdate }) => {
                     onChange={(e) => setSensitivity(parseFloat(e.target.value))}
                     className="w-full accent-green-500 h-1 bg-zinc-700 rounded-lg appearance-none cursor-pointer"
                 />
-                <div className="flex justify-between text-[10px] text-zinc-600 mt-1">
-                    <span>Strict</span>
-                    <span>Easy</span>
-                </div>
             </div>
 
-            <div className="space-y-1">
-                <div className="flex justify-between">
-                    <span className="text-zinc-500">Vert Move:</span>
-                    <span className={debugStats.ampY > (0.08 - sensitivity * 0.06) ? 'text-green-400' : 'text-zinc-400'}>
-                        {debugStats.ampY.toFixed(3)}
-                    </span>
-                </div>
-                <div className="flex justify-between">
-                    <span className="text-zinc-500">Horiz Noise:</span>
-                    <span className={debugStats.ampX < debugStats.ampY * 0.6 ? 'text-zinc-400' : 'text-red-400'}>
-                        {debugStats.ampX.toFixed(3)}
-                    </span>
-                </div>
-                <div className="flex justify-between">
-                    <span className="text-zinc-500">Oscillations:</span>
-                    <span className={debugStats.osc >= 3 ? 'text-green-400' : 'text-zinc-400'}>
-                        {debugStats.osc}
-                    </span>
-                </div>
+            <div className="grid grid-cols-2 gap-x-2 gap-y-1">
+                <span className="text-zinc-500">Amp Y:</span>
+                <span className={debugStats.ampY > (0.08 - sensitivity * 0.06) ? 'text-green-400' : 'text-zinc-400'}>
+                    {debugStats.ampY.toFixed(3)}
+                </span>
+
+                <span className="text-zinc-500">Osc Y:</span>
+                <span className={debugStats.oscY >= 3 ? 'text-green-400' : 'text-zinc-400'}>
+                    {debugStats.oscY}
+                </span>
+
+                <span className="text-zinc-500">Amp X:</span>
+                <span className={debugStats.ampX > (0.08 - sensitivity * 0.06) ? 'text-red-400' : 'text-zinc-400'}>
+                    {debugStats.ampX.toFixed(3)}
+                </span>
+                
+                <span className="text-zinc-500">Osc X:</span>
+                <span className={debugStats.oscX >= 3 ? 'text-red-400' : 'text-zinc-400'}>
+                    {debugStats.oscX}
+                </span>
             </div>
         </div>
       )}
@@ -312,8 +326,11 @@ const FaceDetector: React.FC<FaceDetectorProps> = ({ onStatsUpdate }) => {
       {/* Feedback Overlay */}
       {feedback && (
         <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
-            <div className="bg-green-500 text-black px-8 py-4 rounded-2xl text-3xl font-black tracking-tighter shadow-xl animate-bounce border-4 border-green-400">
-                {feedback}
+            <div className={`
+                px-8 py-4 rounded-2xl text-3xl font-black tracking-tighter shadow-xl animate-bounce border-4
+                ${feedback.type === 'NOD' ? 'bg-green-500 text-black border-green-400' : 'bg-red-600 text-white border-red-500'}
+            `}>
+                {feedback.msg}
             </div>
         </div>
       )}

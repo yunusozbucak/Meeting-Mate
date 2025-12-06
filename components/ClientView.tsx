@@ -14,8 +14,8 @@ const ClientView: React.FC = () => {
   
   // Refs to track state for edge-trigger logic without re-renders
   const stateRef = useRef<'IDLE' | 'AGREE' | 'DISAGREE'>('IDLE');
-  const idleTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const nodderTimeoutRefs = useRef<Map<string, NodeJS.Timeout>>(new Map());
+  const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const nodderTimeoutRefs = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
   // MOCK: Expo Haptics Implementation
   const triggerHaptics = (type: 'HEAVY' | 'ERROR') => {

@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState, useImperativeHandle, forwardRef } f
 import { FilesetResolver, FaceLandmarker } from '@mediapipe/tasks-vision';
 import { Landmark, DetectionResult } from '../types';
 import { SignalingService } from '../services/signalingService';
-import { RefreshCw, AlertCircle, Settings2, Activity, Cast, Mic, MicOff, Camera, Video, Check, X } from 'lucide-react';
+import { RefreshCw, AlertCircle, Settings2, Activity, Cast, Mic, MicOff, Camera, Video, Check, X, ShieldAlert } from 'lucide-react';
 
 interface FaceDetectorProps {
   onStatsUpdate: (type: 'NOD' | 'SHAKE') => void;
@@ -16,7 +16,7 @@ export interface FaceDetectorHandle {
 const FaceDetector = forwardRef<FaceDetectorHandle, FaceDetectorProps>(({ onStatsUpdate }, ref) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [isLoaded, setIsLoaded] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{title: string, msg: string} | null>(null);
   const [feedback, setFeedback] = useState<{msg: string, type: 'NOD' | 'SHAKE'} | null>(null);
   const [showDebug, setShowDebug] = useState(false);
   const [roomCode, setRoomCode] = useState<string | null>(null);
@@ -78,7 +78,7 @@ const FaceDetector = forwardRef<FaceDetectorHandle, FaceDetectorProps>(({ onStat
         })
         .catch(err => {
             console.error("Network Init Failed", err);
-            if(mounted) setError("Network initialization failed. Check internet.");
+            // Non-fatal, just log
         });
 
     // 2. Initialize AI
@@ -104,7 +104,7 @@ const FaceDetector = forwardRef<FaceDetectorHandle, FaceDetectorProps>(({ onStat
         setIsLoaded(true);
       } catch (err) {
         console.error(err);
-        if (mounted) setError("Failed to load AI models.");
+        if (mounted) setError({ title: "AI Engine Failed", msg: "Failed to load computer vision models." });
       }
     };
 
@@ -142,13 +142,35 @@ const FaceDetector = forwardRef<FaceDetectorHandle, FaceDetectorProps>(({ onStat
 
   const startCamera = async (isAutoStart = false) => {
     setError(null);
+    
+    // Security Check
+    if (!window.isSecureContext) {
+        setError({
+            title: "Insecure Context",
+            msg: "Camera requires HTTPS. Please check your URL."
+        });
+        return;
+    }
+
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        setError({
+            title: "Unsupported Browser",
+            msg: "Your browser does not support camera access."
+        });
+        return;
+    }
+
     try {
       let stream: MediaStream;
       
       try {
         // Try Video + Audio first
         stream = await navigator.mediaDevices.getUserMedia({ 
-            video: { width: 640, height: 480 },
+            video: { 
+                width: { ideal: 640 }, 
+                height: { ideal: 480 },
+                facingMode: "user"
+            },
             audio: true 
         });
         setHasAudio(true);
@@ -156,7 +178,11 @@ const FaceDetector = forwardRef<FaceDetectorHandle, FaceDetectorProps>(({ onStat
         console.warn("Audio/Video permission failed, retrying Video only", audioErr);
         // Fallback: Video Only
         stream = await navigator.mediaDevices.getUserMedia({ 
-            video: { width: 640, height: 480 },
+            video: { 
+                width: { ideal: 640 }, 
+                height: { ideal: 480 },
+                facingMode: "user" 
+            },
             audio: false 
         });
         setHasAudio(false);
@@ -186,12 +212,23 @@ const FaceDetector = forwardRef<FaceDetectorHandle, FaceDetectorProps>(({ onStat
       
       setIsCameraActive(true);
 
-    } catch (err) {
-      console.error(err);
+    } catch (err: any) {
+      console.error("Camera Start Error:", err);
       if (!isAutoStart) {
-          // Only show fatal error if user explicitly clicked the button.
-          // On auto-start fail, we stay on the "Start Monitoring" screen.
-          setError("Camera access denied. Please check site permissions.");
+          let msg = "Could not access camera.";
+          let title = "Access Denied";
+          
+          if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+              msg = "You denied camera permissions. Click the lock icon in your URL bar to reset.";
+          } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+              title = "No Device Found";
+              msg = "No camera or microphone found on this device.";
+          } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
+              title = "Hardware Error";
+              msg = "Camera is already in use by another application.";
+          }
+
+          setError({ title, msg });
       }
     }
   };
@@ -328,40 +365,50 @@ const FaceDetector = forwardRef<FaceDetectorHandle, FaceDetectorProps>(({ onStat
   };
 
   return (
-    <div className="relative w-full max-w-md aspect-video bg-black rounded-2xl overflow-hidden shadow-2xl border border-zinc-800 group mx-auto">
+    <div className="relative w-full max-w-md aspect-video bg-zinc-950 rounded-2xl overflow-hidden shadow-2xl border border-zinc-800 group mx-auto">
       {!isLoaded && !error && (
-        <div className="absolute inset-0 flex items-center justify-center text-zinc-400">
+        <div className="absolute inset-0 flex items-center justify-center text-zinc-400 bg-zinc-900/50 backdrop-blur-sm z-20">
           <RefreshCw className="w-8 h-8 animate-spin" />
-          <span className="ml-3">Loading Vision Engine...</span>
+          <span className="ml-3 font-mono text-sm">INITIALIZING AI...</span>
         </div>
       )}
       
+      {/* PROFESSIONAL ERROR OVERLAY */}
       {error && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center text-red-400 bg-zinc-950 p-6 text-center z-20">
-          <AlertCircle className="w-10 h-10 mb-3 opacity-80" />
-          <p className="mb-4 font-bold text-sm">{error}</p>
-          <button 
+        <div className="absolute inset-0 flex items-center justify-center z-30 bg-zinc-950/90 backdrop-blur-md p-6">
+          <div className="flex flex-col items-center text-center max-w-[280px]">
+             <div className="p-3 bg-red-500/10 rounded-full mb-3">
+                <ShieldAlert className="w-8 h-8 text-red-500" />
+             </div>
+             <h3 className="text-white font-bold text-sm uppercase tracking-wide mb-2">{error.title}</h3>
+             <p className="text-zinc-400 text-xs leading-relaxed mb-4">{error.msg}</p>
+             <button 
                 onClick={() => startCamera(false)}
-                className="flex items-center gap-2 bg-zinc-800 hover:bg-zinc-700 text-white px-4 py-2 rounded-lg transition-colors font-mono text-sm"
+                className="flex items-center gap-2 bg-zinc-100 hover:bg-white text-black px-4 py-2 rounded-lg transition-all font-bold text-xs uppercase tracking-wider"
             >
-                <Camera size={16} />
-                RETRY CAMERA
+                <RefreshCw size={14} />
+                Try Again
             </button>
+          </div>
         </div>
       )}
       
-      {/* Start Button Overlay (Only if not active and loaded) */}
+      {/* Start Button Overlay (Only if not active and loaded and NO error) */}
       {isLoaded && !isCameraActive && !error && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center bg-zinc-950/80 z-10 backdrop-blur-sm">
-             <div className="bg-zinc-900 p-8 rounded-2xl border border-zinc-800 text-center max-w-xs">
-                <Video className="w-12 h-12 text-blue-500 mx-auto mb-4" />
-                <h3 className="text-white font-bold text-lg mb-2">Camera Access</h3>
-                <p className="text-zinc-400 text-xs mb-6">Enable camera to detect your gestures and record audio for analysis.</p>
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-zinc-950/80 z-10 backdrop-blur-sm p-4">
+             <div className="bg-zinc-900 p-6 rounded-2xl border border-zinc-800 text-center max-w-xs w-full shadow-xl">
+                <div className="mx-auto bg-blue-500/10 w-12 h-12 rounded-full flex items-center justify-center mb-4">
+                     <Camera className="w-6 h-6 text-blue-500" />
+                </div>
+                <h3 className="text-white font-bold text-base mb-2">Enable Camera</h3>
+                <p className="text-zinc-400 text-xs mb-6 leading-relaxed">
+                    Access is required to detect gestures and record meeting audio.
+                </p>
                 <button 
                     onClick={() => startCamera(false)}
-                    className="w-full bg-blue-600 hover:bg-blue-500 text-white py-3 rounded-xl font-bold transition-all active:scale-95"
+                    className="w-full bg-blue-600 hover:bg-blue-500 text-white py-3 rounded-xl font-bold text-xs uppercase tracking-widest transition-all active:scale-95 flex items-center justify-center gap-2"
                 >
-                    START MONITORING
+                    Start Monitor
                 </button>
              </div>
         </div>
@@ -370,34 +417,31 @@ const FaceDetector = forwardRef<FaceDetectorHandle, FaceDetectorProps>(({ onStat
       <video
         ref={videoRef}
         autoPlay
-        playsInline
-        muted // Muted locally to avoid feedback loop
-        className="w-full h-full object-cover transform -scale-x-100" // Mirror effect for natural feel
+        playsInline // CRITICAL for mobile
+        muted // Muted locally
+        className="w-full h-full object-cover transform -scale-x-100" 
       />
       
       {/* Live Indicator */}
       {isCameraActive && (
-        <div className="absolute bottom-4 left-4 flex gap-2">
-            <div className="bg-black/60 backdrop-blur px-3 py-1 rounded-full flex items-center gap-2 text-xs font-mono text-green-400 border border-green-500/30">
-                <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+        <div className="absolute bottom-3 left-3 flex gap-2 z-10">
+            <div className="bg-black/60 backdrop-blur px-2 py-1 rounded-md flex items-center gap-2 text-[10px] font-mono text-green-400 border border-green-500/30">
+                <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
                 LIVE
             </div>
             
-            <div className={`bg-black/60 backdrop-blur px-3 py-1 rounded-full flex items-center gap-2 text-xs font-mono border ${hasAudio ? 'text-blue-400 border-blue-500/30' : 'text-zinc-500 border-zinc-700'}`}>
-                {hasAudio ? <Mic size={12} /> : <MicOff size={12} />}
+            <div className={`bg-black/60 backdrop-blur px-2 py-1 rounded-md flex items-center gap-2 text-[10px] font-mono border ${hasAudio ? 'text-blue-400 border-blue-500/30' : 'text-zinc-500 border-zinc-700'}`}>
+                {hasAudio ? <Mic size={10} /> : <MicOff size={10} />}
             </div>
         </div>
       )}
 
        {/* Room Code Indicator */}
-       {roomCode && (
-        <div className="absolute bottom-4 right-4 bg-zinc-100 text-black px-4 py-2 rounded-xl flex items-center gap-3 shadow-lg animate-in fade-in slide-in-from-bottom-4">
-            <div className="bg-black/10 p-1 rounded">
-                <Cast size={18} />
-            </div>
-            <div className="flex flex-col leading-none">
-                <span className="text-[10px] uppercase font-bold text-zinc-500">Room Code</span>
-                <span className="text-xl font-black font-mono tracking-widest">{roomCode}</span>
+       {roomCode && isCameraActive && (
+        <div className="absolute bottom-3 right-3 bg-white/90 text-black px-3 py-1.5 rounded-lg flex items-center gap-2 shadow-lg animate-in fade-in slide-in-from-bottom-4 z-10">
+            <div className="flex flex-col leading-none text-right">
+                <span className="text-[8px] uppercase font-bold text-zinc-500 tracking-wider">CODE</span>
+                <span className="text-sm font-black font-mono tracking-widest">{roomCode}</span>
             </div>
         </div>
        )}
@@ -405,21 +449,25 @@ const FaceDetector = forwardRef<FaceDetectorHandle, FaceDetectorProps>(({ onStat
       {/* Settings Toggle */}
       <button 
         onClick={() => setShowDebug(!showDebug)}
-        className="absolute top-4 right-4 bg-black/60 p-2 rounded-full text-zinc-400 hover:text-white transition-colors z-20"
+        className="absolute top-3 right-3 bg-black/40 hover:bg-black/70 p-1.5 rounded-lg text-zinc-400 hover:text-white transition-colors z-20"
       >
-        <Settings2 size={16} />
+        <Settings2 size={14} />
       </button>
 
       {/* Debug & Fine Tuning Panel */}
       {showDebug && (
-        <div className="absolute top-4 left-4 bg-black/80 backdrop-blur border border-zinc-700 p-4 rounded-xl text-xs font-mono w-48 shadow-xl z-20">
-            <div className="flex items-center gap-2 text-zinc-400 mb-3 border-b border-zinc-700 pb-2">
-                <Activity size={14} />
-                <span>FINE TUNE</span>
+        <div className="absolute top-12 right-3 bg-black/90 backdrop-blur border border-zinc-800 p-3 rounded-lg text-[10px] font-mono w-40 shadow-xl z-20">
+            <div className="flex items-center gap-2 text-zinc-400 mb-2 border-b border-zinc-800 pb-1">
+                <Activity size={10} />
+                <span>SENSITIVITY</span>
             </div>
 
-            <div className="mb-4">
-                <label className="block text-zinc-500 mb-1">Sensitivity ({sensitivity.toFixed(1)})</label>
+            <div className="mb-3">
+                <div className="flex justify-between text-zinc-500 mb-1">
+                    <span>Low</span>
+                    <span className="text-white">{sensitivity.toFixed(1)}</span>
+                    <span>High</span>
+                </div>
                 <input 
                     type="range" 
                     min="0" 
@@ -431,41 +479,30 @@ const FaceDetector = forwardRef<FaceDetectorHandle, FaceDetectorProps>(({ onStat
                 />
             </div>
 
-            <div className="grid grid-cols-2 gap-x-2 gap-y-1">
-                <span className="text-zinc-500">Amp Y:</span>
-                <span className={debugStats.ampY > (0.08 - sensitivity * 0.06) ? 'text-green-400' : 'text-zinc-400'}>
-                    {debugStats.ampY.toFixed(3)}
-                </span>
-
-                <span className="text-zinc-500">Osc Y:</span>
-                <span className={debugStats.oscY >= 1 ? 'text-green-400' : 'text-zinc-400'}>
-                    {debugStats.oscY}
-                </span>
-
-                <span className="text-zinc-500">Amp X:</span>
-                <span className={debugStats.ampX > (0.08 - sensitivity * 0.06) ? 'text-red-400' : 'text-zinc-400'}>
-                    {debugStats.ampX.toFixed(3)}
-                </span>
-                
-                <span className="text-zinc-500">Osc X:</span>
-                <span className={debugStats.oscX >= 1 ? 'text-red-400' : 'text-zinc-400'}>
-                    {debugStats.oscX}
-                </span>
+            <div className="grid grid-cols-2 gap-x-2 gap-y-1 text-zinc-500">
+                <span>Amp Y:</span>
+                <span className={debugStats.ampY > (0.08 - sensitivity * 0.06) ? 'text-green-400' : ''}>{debugStats.ampY.toFixed(2)}</span>
+                <span>Osc Y:</span>
+                <span className={debugStats.oscY >= 1 ? 'text-green-400' : ''}>{debugStats.oscY}</span>
+                <span>Amp X:</span>
+                <span className={debugStats.ampX > (0.08 - sensitivity * 0.06) ? 'text-red-400' : ''}>{debugStats.ampX.toFixed(2)}</span>
+                <span>Osc X:</span>
+                <span className={debugStats.oscX >= 1 ? 'text-red-400' : ''}>{debugStats.oscX}</span>
             </div>
         </div>
       )}
 
       {/* Professional Feedback Overlay */}
       {feedback && (
-        <div className="absolute top-6 left-1/2 -translate-x-1/2 z-10 pointer-events-none">
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 pointer-events-none">
             <div className={`
-                flex items-center gap-2 px-4 py-2 rounded-full backdrop-blur-md border shadow-lg transition-all transform animate-in fade-in slide-in-from-top-4
+                flex items-center gap-2 px-3 py-1.5 rounded-full backdrop-blur-xl border shadow-2xl transition-all transform animate-in fade-in slide-in-from-top-4
                 ${feedback.type === 'NOD' 
-                    ? 'bg-green-500/20 border-green-500/50 text-green-400' 
-                    : 'bg-red-500/20 border-red-500/50 text-red-400'}
+                    ? 'bg-green-500/10 border-green-500/40 text-green-400 shadow-green-900/20' 
+                    : 'bg-red-500/10 border-red-500/40 text-red-400 shadow-red-900/20'}
             `}>
-                {feedback.type === 'NOD' ? <Check size={16} strokeWidth={3} /> : <X size={16} strokeWidth={3} />}
-                <span className="text-xs font-bold tracking-widest uppercase">{feedback.msg}</span>
+                {feedback.type === 'NOD' ? <Check size={12} strokeWidth={3} /> : <X size={12} strokeWidth={3} />}
+                <span className="text-[10px] font-bold tracking-[0.2em] uppercase">{feedback.msg}</span>
             </div>
         </div>
       )}

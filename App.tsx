@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
-import { AppMode, MeetingStats } from './types';
-import FaceDetector from './components/FaceDetector';
+
+import React, { useState, useRef } from 'react';
+import { AppMode, MeetingStats, AnalysisResult } from './types';
+import FaceDetector, { FaceDetectorHandle } from './components/FaceDetector';
 import ClientView from './components/ClientView';
 import { generateMeetingSummary } from './services/geminiService';
-import { Video, Smartphone, Sparkles, ChevronRight, User, Users } from 'lucide-react';
+import { Video, Smartphone, Sparkles, ChevronRight, User, Users, MessageSquare, Lightbulb, Activity, Quote, Camera } from 'lucide-react';
 
 const App: React.FC = () => {
   const [mode, setMode] = useState<AppMode>(AppMode.INTRO);
@@ -13,8 +14,11 @@ const App: React.FC = () => {
     lastGestureTime: 0,
     startTime: Date.now()
   });
-  const [analysis, setAnalysis] = useState<string>('');
+  const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  
+  // Ref to access FaceDetector methods (specifically audio retrieval)
+  const faceDetectorRef = useRef<FaceDetectorHandle>(null);
 
   const handleStatsUpdate = (type: 'NOD' | 'SHAKE') => {
     setStats(prev => ({
@@ -27,7 +31,16 @@ const App: React.FC = () => {
 
   const handleAnalyze = async () => {
     setIsAnalyzing(true);
-    const result = await generateMeetingSummary(stats);
+    setAnalysis(null);
+    
+    // 1. Get Audio Recording from FaceDetector
+    let audioBase64: string | undefined;
+    if (faceDetectorRef.current) {
+        audioBase64 = await faceDetectorRef.current.stopAndGetAudio();
+    }
+
+    // 2. Generate Analysis with Video Stats + Audio
+    const result = await generateMeetingSummary(stats, audioBase64);
     setAnalysis(result);
     setIsAnalyzing(false);
   };
@@ -58,7 +71,7 @@ const App: React.FC = () => {
                 </div>
                 <div className="text-left">
                   <h3 className="font-bold text-zinc-100">Host Mode</h3>
-                  <p className="text-xs text-zinc-500 mt-1">Camera & Detection (Laptop)</p>
+                  <p className="text-xs text-zinc-500 mt-1">Camera Analysis (Laptop)</p>
                 </div>
               </div>
               <ChevronRight className="text-zinc-600 group-hover:text-white transition-colors" />
@@ -110,14 +123,38 @@ const App: React.FC = () => {
         {mode === AppMode.CLIENT ? (
           <ClientView />
         ) : (
-          <div className="max-w-4xl mx-auto p-6 grid grid-cols-1 md:grid-cols-2 gap-8">
+          <div className="max-w-4xl mx-auto p-6 grid grid-cols-1 lg:grid-cols-2 gap-8">
+            {/* LEFT COLUMN: MONITORING */}
             <div className="space-y-6">
+              
+              {/* Instructions Panel */}
+              <div className="bg-zinc-900/50 p-6 rounded-2xl border border-zinc-800 space-y-4">
+                <div className="flex items-start gap-4">
+                   <div className="bg-blue-500/20 p-2 rounded-lg text-blue-400">
+                      <Camera size={20} />
+                   </div>
+                   <div>
+                      <h3 className="font-bold text-white text-sm">Step 1: Enable Camera</h3>
+                      <p className="text-xs text-zinc-400 mt-1">Allow permissions to start monitoring gestures automatically.</p>
+                   </div>
+                </div>
+                 <div className="flex items-start gap-4 border-t border-zinc-800 pt-4">
+                   <div className="bg-green-500/20 p-2 rounded-lg text-green-400">
+                      <Activity size={20} />
+                   </div>
+                   <div>
+                      <h3 className="font-bold text-white text-sm">Step 2: Start Meeting</h3>
+                      <p className="text-xs text-zinc-400 mt-1">The AI will track your nods (agreements) and shakes (disagreements).</p>
+                   </div>
+                </div>
+              </div>
+
               <div className="space-y-2">
                 <h2 className="text-2xl font-bold text-white">Live Monitor</h2>
-                <p className="text-sm text-zinc-400">Position camera to detect head gestures.</p>
+                <p className="text-sm text-zinc-400">AI gesture detection active.</p>
               </div>
               
-              <FaceDetector onStatsUpdate={handleStatsUpdate} />
+              <FaceDetector ref={faceDetectorRef} onStatsUpdate={handleStatsUpdate} />
 
               <div className="p-4 bg-zinc-900/50 rounded-xl border border-zinc-800">
                 <h4 className="text-xs font-bold text-zinc-500 uppercase tracking-wider mb-3">Live Statistics</h4>
@@ -134,27 +171,67 @@ const App: React.FC = () => {
               </div>
             </div>
 
+            {/* RIGHT COLUMN: AI INSIGHTS */}
             <div className="flex flex-col h-full space-y-6">
                <div className="space-y-2">
                 <h2 className="text-2xl font-bold text-white">AI Analysis</h2>
-                <p className="text-sm text-zinc-400">Gemini-powered consensus summary.</p>
+                <p className="text-sm text-zinc-400">Multimodal (Video + Audio) behavioral report.</p>
               </div>
 
-              <div className="flex-1 bg-zinc-900/30 rounded-2xl border border-zinc-800 p-6 flex flex-col items-center justify-center text-center relative overflow-hidden">
+              <div className="flex-1 bg-zinc-900/30 rounded-2xl border border-zinc-800 p-6 flex flex-col relative overflow-hidden min-h-[400px]">
                 {analysis ? (
-                   <div className="text-zinc-200 text-lg leading-relaxed animate-in fade-in zoom-in duration-500">
-                      <Sparkles className="w-8 h-8 text-yellow-500 mx-auto mb-4" />
-                      "{analysis}"
+                   <div className="flex-1 space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-700">
+                      
+                      {/* Summary Section */}
+                      <div className="bg-black/40 p-4 rounded-xl border-l-4 border-purple-500">
+                        <div className="flex items-center gap-2 mb-2 text-purple-400">
+                            <Sparkles size={16} />
+                            <h3 className="font-bold text-sm uppercase tracking-wider">Summary</h3>
+                        </div>
+                        <p className="text-zinc-200 text-sm leading-relaxed">{analysis.summary}</p>
+                      </div>
+
+                       {/* Key Quotes Section */}
+                       <div className="bg-black/40 p-4 rounded-xl border-l-4 border-pink-500">
+                        <div className="flex items-center gap-2 mb-2 text-pink-400">
+                            <Quote size={16} />
+                            <h3 className="font-bold text-sm uppercase tracking-wider">Key Quotes</h3>
+                        </div>
+                        <ul className="space-y-2">
+                            {analysis.keyQuotes.map((quote, idx) => (
+                                <li key={idx} className="text-zinc-300 text-sm italic border-l-2 border-zinc-700 pl-2">"{quote}"</li>
+                            ))}
+                        </ul>
+                      </div>
+
+                      {/* Expression Quality Section */}
+                      <div className="bg-black/40 p-4 rounded-xl border-l-4 border-blue-500">
+                        <div className="flex items-center gap-2 mb-2 text-blue-400">
+                            <MessageSquare size={16} />
+                            <h3 className="font-bold text-sm uppercase tracking-wider">Expression & Tone</h3>
+                        </div>
+                        <p className="text-zinc-200 text-sm leading-relaxed">{analysis.expressionQuality}</p>
+                      </div>
+
+                      {/* Insight Section */}
+                      <div className="bg-black/40 p-4 rounded-xl border-l-4 border-yellow-500">
+                         <div className="flex items-center gap-2 mb-2 text-yellow-400">
+                            <Lightbulb size={16} />
+                            <h3 className="font-bold text-sm uppercase tracking-wider">Result-Oriented Insight</h3>
+                        </div>
+                        <p className="text-zinc-200 text-sm leading-relaxed">{analysis.insight}</p>
+                      </div>
+
                    </div>
                 ) : (
-                  <div className="text-zinc-600">
+                  <div className="flex-1 flex flex-col items-center justify-center text-center text-zinc-600">
                     <Sparkles className="w-12 h-12 mx-auto mb-4 opacity-20" />
-                    <p>Start the meeting and generate insights based on group gestures.</p>
+                    <p className="max-w-xs">Start the camera monitoring to record gestures and audio, then generate a comprehensive report.</p>
                   </div>
                 )}
                 
                 {/* Background Glow */}
-                {analysis && <div className="absolute inset-0 bg-gradient-to-t from-purple-500/10 to-transparent pointer-events-none" />}
+                {analysis && <div className="absolute inset-0 bg-gradient-to-t from-purple-500/5 to-transparent pointer-events-none" />}
               </div>
 
               <button 
@@ -167,11 +244,11 @@ const App: React.FC = () => {
                 } disabled:opacity-50 disabled:cursor-not-allowed`}
               >
                 {isAnalyzing ? (
-                  <>Processing...</>
+                  <>Processing Video & Audio...</>
                 ) : (
                   <>
                     <Sparkles size={16} />
-                    Generate Report
+                    Stop & Generate Report
                   </>
                 )}
               </button>

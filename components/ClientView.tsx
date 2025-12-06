@@ -201,9 +201,9 @@ const ClientView: React.FC = () => {
 
         {/* Primary Text */}
         <h1 className="text-5xl md:text-6xl font-black tracking-tighter uppercase transition-all text-center">
-          {gestureState === 'IDLE' && 'SESSİZ'}
-          {gestureState === 'AGREE' && 'ONAYLAMA'}
-          {gestureState === 'DISAGREE' && 'RED'}
+          {gestureState === 'IDLE' && 'SILENT'}
+          {gestureState === 'AGREE' && 'AGREEMENT'}
+          {gestureState === 'DISAGREE' && 'DISAGREE'}
         </h1>
         
         {/* Subtitle */}

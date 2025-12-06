@@ -1,3 +1,4 @@
+
 export enum AppMode {
   INTRO = 'INTRO',
   HOST = 'HOST',
@@ -9,6 +10,13 @@ export interface MeetingStats {
   shakes: number;
   lastGestureTime: number;
   startTime: number;
+}
+
+export interface AnalysisResult {
+  summary: string;
+  expressionQuality: string;
+  insight: string;
+  keyQuotes: string[]; // New: Extracted key phrases from audio
 }
 
 export interface SignalMessage {
